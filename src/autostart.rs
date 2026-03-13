@@ -36,6 +36,8 @@ pub fn set_autostart(enabled: bool) -> Result<()> {
             .arg("-NonInteractive")
             .arg("-ExecutionPolicy")
             .arg("Bypass")
+            .arg("-WindowStyle")
+            .arg("Hidden")
             .arg("-Command")
             .arg(script)
             .status()?;
