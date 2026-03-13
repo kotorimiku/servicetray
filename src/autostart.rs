@@ -4,7 +4,10 @@ use color_eyre::eyre::{Result, eyre};
 
 #[cfg(target_os = "windows")]
 pub fn set_autostart(enabled: bool) -> Result<()> {
-    // Per-user Startup folder: %APPDATA%\Microsoft\Windows\Start Menu\Programs\Startup
+    // Create/remove a shortcut in the user's Startup folder without using the registry.
+    // Use PowerShell via CreateProcess with CREATE_NO_WINDOW to avoid showing a console window.
+    use std::os::windows::process::CommandExt;
+
     let appdata = env::var_os("APPDATA").ok_or_else(|| eyre!("APPDATA not set"))?;
     let mut startup_dir = PathBuf::from(appdata);
     startup_dir.push("Microsoft");
@@ -21,7 +24,7 @@ pub fn set_autostart(enabled: bool) -> Result<()> {
     let shortcut_path = startup_dir.join("servicetray.lnk");
 
     if enabled {
-        // Use PowerShell to create a .lnk via WScript.Shell COM object.
+        // Use PowerShell COM object to create .lnk, but create process with no window.
         let script = format!(
             r#"$s=(New-Object -ComObject WScript.Shell).CreateShortcut('{}');$s.TargetPath='{}';$s.WorkingDirectory='{}';$s.Save()"#,
             shortcut_path.display(),
@@ -31,13 +34,14 @@ pub fn set_autostart(enabled: bool) -> Result<()> {
                 .unwrap_or_else(|| "".to_string())
         );
 
+        const CREATE_NO_WINDOW: u32 = 0x08000000;
+
         let status = std::process::Command::new("powershell")
+            .creation_flags(CREATE_NO_WINDOW)
             .arg("-NoProfile")
             .arg("-NonInteractive")
             .arg("-ExecutionPolicy")
             .arg("Bypass")
-            .arg("-WindowStyle")
-            .arg("Hidden")
             .arg("-Command")
             .arg(script)
             .status()?;
