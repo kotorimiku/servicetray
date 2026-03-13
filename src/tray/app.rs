@@ -1,0 +1,294 @@
+use std::sync::{
+    Arc, Mutex, RwLock,
+    atomic::{AtomicBool, Ordering},
+};
+
+use color_eyre::eyre::{Result, eyre};
+use crossbeam_channel::unbounded;
+use rust_i18n::t;
+use tracing::info;
+use tray_icon::{Icon, TrayIcon, TrayIconBuilder};
+use winit::{application::ApplicationHandler, event_loop::EventLoop};
+
+use crate::{
+    config::AppConfig,
+    event::{CustomEvent, MenuAction},
+    process::ProcessManager,
+    tray::menu::MenuBuilder,
+    watcher::ConfigWatcher,
+};
+
+fn create_icon() -> Result<Icon> {
+    let icon_bytes = include_bytes!("../../assets/icon.png");
+    let img = image::load_from_memory(icon_bytes)
+        .map_err(|e| eyre!("{}", t!("load.icon.failed", error = e.to_string())))?;
+    let rgba = img.to_rgba8();
+    let (width, height) = rgba.dimensions();
+    Icon::from_rgba(rgba.into_raw(), width, height)
+        .map_err(|e| eyre!("{}", t!("create.icon.failed", error = e.to_string())))
+}
+
+pub struct TrayApp {
+    config: Arc<RwLock<AppConfig>>,
+    process_manager: Arc<ProcessManager>,
+}
+
+impl TrayApp {
+    pub fn new(config: AppConfig) -> Self {
+        TrayApp {
+            config: Arc::new(RwLock::new(config)),
+            process_manager: Arc::new(ProcessManager::new()),
+        }
+    }
+
+    fn start_all_processes(&self) {
+        let config = self.config.read().unwrap();
+        for program in &config.programs {
+            if let Err(e) = self.process_manager.start(program) {
+                tracing::error!(
+                    "{}",
+                    t!(
+                        "start.program.failed",
+                        name = program.name.clone(),
+                        error = e.to_string()
+                    )
+                );
+            }
+        }
+    }
+
+    pub fn run(self) -> Result<()> {
+        let event_loop = EventLoop::with_user_event().build()?;
+        let running = Arc::new(AtomicBool::new(true));
+
+        let action_map: Arc<Mutex<Vec<(String, MenuAction)>>> = Arc::new(Mutex::new(Vec::new()));
+
+        self.start_all_processes();
+
+        let config = self.config.read().unwrap().clone();
+        let menu_builder = MenuBuilder::new(action_map.clone(), self.process_manager.clone());
+        let tray_menu = menu_builder.build(&config);
+
+        let icon = create_icon()?;
+        let tooltip_label = t!("service.tray").to_string();
+        let tray = TrayIconBuilder::new()
+            .with_icon(icon)
+            .with_menu(Box::new(tray_menu))
+            .with_tooltip(tooltip_label.as_str())
+            .build()?;
+
+        let (event_sender, event_receiver) = unbounded();
+
+        let _watcher = ConfigWatcher::start(self.config.clone(), event_sender)?;
+
+        let event_loop_proxy = event_loop.create_proxy();
+
+        let process_manager = self.process_manager.clone();
+        let action_map_clone = action_map.clone();
+        let running_clone = running.clone();
+        let config_clone = self.config.clone();
+        let process_manager_for_update = self.process_manager.clone();
+
+        let menu_event_receiver = tray_icon::menu::MenuEvent::receiver();
+
+        std::thread::spawn(move || {
+            loop {
+                crossbeam_channel::select! {
+                    recv(menu_event_receiver) -> event => {
+                        if let Ok(event) = event {
+                            let actions = action_map_clone.lock().unwrap();
+                            for (id, action) in actions.iter() {
+                                if &event.id.0 == id {
+                                    match action {
+                                        MenuAction::OpenUrl(url) => {
+                                            if let Err(e) = open::that(url) {
+                                                tracing::error!("{}", t!("open.url.failed", error = e.to_string()));
+                                            }
+                                        }
+                                        MenuAction::ToggleAutostart => {
+                                            if let Ok(mut cfg) = config_clone.write() {
+                                                let old_cfg = cfg.clone();
+                                                cfg.autostart = !cfg.autostart;
+
+                                                // Apply system autostart change
+                                                if let Err(e) = crate::autostart::set_autostart(cfg.autostart) {
+                                                    tracing::error!("{}", t!("tray.app.error", error = e.to_string()));
+                                                }
+
+                                                // Persist config
+                                                if let Err(e) = cfg.save() {
+                                                    tracing::error!("{}", t!("open.config.failed", error = e.to_string()));
+                                                }
+
+                                                // Notify main thread to update menu/processes
+                                                let _ = event_loop_proxy.send_event(CustomEvent::ConfigUpdated(old_cfg));
+                                            }
+                                        }
+                                        MenuAction::OpenConfig => {
+                                            let config_path = AppConfig::get_config_path();
+                                            if let Err(e) = open::that(config_path) {
+                                                tracing::error!("{}", t!("open.config.failed", error = e.to_string()));
+                                            }
+                                        }
+                                        MenuAction::Exit => {
+                                            process_manager.stop_all();
+                                            running_clone.store(false, Ordering::SeqCst);
+                                            std::process::exit(0);
+                                        }
+                                    }
+                                    break;
+                                }
+                            }
+                        }
+                    }
+                    recv(event_receiver) -> event => {
+                        if let Ok(CustomEvent::ConfigUpdated(old_config)) = event {
+                            // Configuration updated; start/stop processes according to changes
+                                if let Ok(new_config) = config_clone.read() {
+                                    let new_cfg = new_config.clone();
+                                    info!("{}", t!("config.reloaded.count", count = new_cfg.programs.len()));
+
+                                // Update processes according to configuration changes
+                                Self::update_processes_internal(&process_manager_for_update, &old_config, &new_cfg);
+
+                                // Notify main thread to update the menu
+                                let _ = event_loop_proxy.send_event(CustomEvent::ConfigUpdated(old_config));
+                            }
+                        }
+                    }
+                }
+            }
+        });
+
+        // Run the event loop
+        let mut app_handler = AppHandler {
+            running,
+            tray: Some(tray),
+            config: self.config.clone(),
+            action_map,
+            process_manager: self.process_manager.clone(),
+        };
+        event_loop.run_app(&mut app_handler)?;
+
+        Ok(())
+    }
+
+    /// Start/stop processes based on configuration changes
+    fn update_processes_internal(
+        process_manager: &ProcessManager,
+        old_config: &AppConfig,
+        new_config: &AppConfig,
+    ) {
+        use std::collections::HashSet;
+
+        let old_names: HashSet<_> = old_config.programs.iter().map(|p| &p.name).collect();
+        let new_names: HashSet<_> = new_config.programs.iter().map(|p| &p.name).collect();
+
+        // Stop processes that were removed
+        for name in old_names.difference(&new_names) {
+            if let Err(e) = process_manager.stop(name) {
+                tracing::error!(
+                    "{}",
+                    t!("failed.to.stop.program", name = name, error = e.to_string())
+                );
+            }
+        }
+
+        // Start newly added processes
+        for program in &new_config.programs {
+            if !old_names.contains(&program.name)
+                && let Err(e) = process_manager.start(program)
+            {
+                tracing::error!(
+                    "{}",
+                    t!(
+                        "start.program.failed",
+                        name = program.name.clone(),
+                        error = e.to_string()
+                    )
+                );
+            }
+        }
+
+        // Restart processes with changed properties
+        for new_program in &new_config.programs {
+            if let Some(old_program) = old_config
+                .programs
+                .iter()
+                .find(|p| p.name == new_program.name)
+            {
+                // If the configuration changed, restart the process
+                if old_program != new_program {
+                    info!(
+                        "{}",
+                        t!(
+                            "program.config.changed.restarting",
+                            name = new_program.name.clone()
+                        )
+                    );
+                    if let Err(e) = process_manager.stop(&new_program.name) {
+                        tracing::error!(
+                            "{}",
+                            t!(
+                                "failed.to.stop.program",
+                                name = new_program.name.clone(),
+                                error = e.to_string()
+                            )
+                        );
+                    }
+                    if let Err(e) = process_manager.start(new_program) {
+                        tracing::error!(
+                            "{}",
+                            t!(
+                                "start.program.failed",
+                                name = new_program.name.clone(),
+                                error = e.to_string()
+                            )
+                        );
+                    }
+                }
+            }
+        }
+    }
+}
+
+/// Application event handler
+struct AppHandler {
+    running: Arc<AtomicBool>,
+    tray: Option<TrayIcon>,
+    config: Arc<RwLock<AppConfig>>,
+    action_map: Arc<Mutex<Vec<(String, MenuAction)>>>,
+    process_manager: Arc<ProcessManager>,
+}
+
+impl ApplicationHandler<CustomEvent> for AppHandler {
+    fn resumed(&mut self, _event_loop: &winit::event_loop::ActiveEventLoop) {}
+
+    fn window_event(
+        &mut self,
+        _event_loop: &winit::event_loop::ActiveEventLoop,
+        _window_id: winit::window::WindowId,
+        _event: winit::event::WindowEvent,
+    ) {
+    }
+
+    fn user_event(&mut self, _event_loop: &winit::event_loop::ActiveEventLoop, event: CustomEvent) {
+        let CustomEvent::ConfigUpdated(_old_config) = event;
+        // Update menu in main thread
+        if let Ok(config) = self.config.read() {
+            let menu_builder =
+                MenuBuilder::new(self.action_map.clone(), self.process_manager.clone());
+            let new_menu = menu_builder.build(&config);
+            if let Some(tray) = &self.tray {
+                tray.set_menu(Some(Box::new(new_menu)));
+            }
+            info!("{}", t!("tray.menu.updated"));
+        }
+    }
+
+    fn about_to_wait(&mut self, event_loop: &winit::event_loop::ActiveEventLoop) {
+        if !self.running.load(Ordering::SeqCst) {
+            event_loop.exit();
+        }
+    }
+}

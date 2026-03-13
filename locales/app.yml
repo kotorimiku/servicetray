@@ -1,0 +1,76 @@
+_version: 2
+exit:
+  en: "Exit"
+  zh-CN: "退出"
+open.link:
+  en: "Open %{name}"
+  zh-CN: "打开 %{name}"
+open.config:
+  en: "📁 Open config"
+  zh-CN: "📁 打开配置文件"
+service.tray:
+  en: "Service Tray"
+  zh-CN: "服务托盘"
+open.url.failed:
+  en: "Failed to open URL: %{error}"
+  zh-CN: "打开URL失败: %{error}"
+open.config.failed:
+  en: "Failed to open config file: %{error}"
+  zh-CN: "打开配置文件失败: %{error}"
+config.reloaded.count:
+  en: "Configuration reloaded, menu items: %{count}"
+  zh-CN: "配置已重新加载，菜单项数量: %{count}"
+tray.menu.updated:
+  en: "Tray menu updated"
+  zh-CN: "托盘菜单已更新"
+config.load.error:
+  en: "config load error: %{error}"
+  zh-CN: "配置加载出错: %{error}"
+tray.app.error:
+  en: "tray app error: %{error}"
+  zh-CN: "托盘应用错误: %{error}"
+tray.app.exited:
+  en: "tray app exited"
+  zh-CN: "托盘应用已退出"
+already.running:
+  en: "Program %{name} is already running"
+  zh-CN: "程序 %{name} 已在运行"
+started.program:
+  en: "Started program: %{name}"
+  zh-CN: "已启动程序: %{name}"
+stopped.program:
+  en: "Stopped program: %{name}"
+  zh-CN: "已停止程序: %{name}"
+not.running:
+  en: "Program %{name} is not running"
+  zh-CN: "程序 %{name} 未在运行"
+failed.to.stop.program:
+  en: "Failed to stop program %{name}: %{error}"
+  zh-CN: "停止程序 %{name} 失败: %{error}"
+program.stopped:
+  en: "Program stopped: %{name}"
+  zh-CN: "程序已停止: %{name}"
+processmanager.destroy:
+  en: "ProcessManager is being destroyed, stopping all child processes..."
+  zh-CN: "ProcessManager 正在销毁，正在停止所有子进程..."
+config.file.updated.reloading:
+  en: "Config file updated, reloading..."
+  zh-CN: "配置文件已更新，重新加载..."
+config.reload.failed:
+  en: "Failed to reload config: %{error}"
+  zh-CN: "重新加载配置失败: %{error}"
+start.program.failed:
+  en: "Start program '%{name}' failed: %{error}"
+  zh-CN: "启动程序 '%{name}' 失败: %{error}"
+program.config.changed.restarting:
+  en: "Program %{name} configuration changed, restarting..."
+  zh-CN: "程序 %{name} 配置已变化，正在重启..."
+load.icon.failed:
+  en: "Load icon failed: %{error}"
+  zh-CN: "加载图标失败: %{error}"
+create.icon.failed:
+  en: "Create icon failed: %{error}"
+  zh-CN: "创建图标失败: %{error}"
+autostart:
+  en: "Auto start on boot"
+  zh-CN: "开机自启"
