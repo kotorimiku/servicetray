@@ -6,7 +6,7 @@ use std::{
 };
 
 use rust_i18n::t;
-use tracing::{error, info};
+use tracing::info;
 
 use crate::config::ProgramConfig;
 
@@ -84,7 +84,7 @@ impl ProcessManager {
 
         for (name, mut child) in processes.drain() {
             if let Err(e) = child.kill() {
-                error!(
+                tracing::error!(
                     "{}",
                     t!(
                         "failed.to.stop.program",

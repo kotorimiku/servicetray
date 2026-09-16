@@ -5,6 +5,18 @@ exit:
 open.link:
   en: "Open %{name}"
   zh-CN: "打开 %{name}"
+restart.service:
+  en: "Restart Service"
+  zh-CN: "重启服务"
+restart.program:
+  en: "Restart %{name}"
+  zh-CN: "重启 %{name}"
+restarting.program:
+  en: "Restarting program: %{name}"
+  zh-CN: "正在重启程序: %{name}"
+restart.program.failed:
+  en: "Restart program '%{name}' failed: %{error}"
+  zh-CN: "重启程序 '%{name}' 失败: %{error}"
 open.config:
   en: "📁 Open config"
   zh-CN: "📁 打开配置文件"

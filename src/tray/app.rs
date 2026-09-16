@@ -105,6 +105,46 @@ impl TrayApp {
                                                 tracing::error!("{}", t!("open.url.failed", error = e.to_string()));
                                             }
                                         }
+                                        MenuAction::RestartProgram(name) => {
+                                            let program_opt = {
+                                                if let Ok(cfg) = config_clone.read() {
+                                                    cfg.programs.iter().find(|p| &p.name == name).cloned()
+                                                } else {
+                                                    None
+                                                }
+                                            };
+
+                                            if let Some(program) = program_opt {
+                                                info!(
+                                                    "{}",
+                                                    t!(
+                                                        "program.config.changed.restarting",
+                                                        name = program.name.clone()
+                                                    )
+                                                );
+                                                if let Err(e) = process_manager.stop(&program.name) {
+                                                    tracing::error!(
+                                                        "{}",
+                                                        t!(
+                                                            "failed.to.stop.program",
+                                                            name = program.name.clone(),
+                                                            error = e.to_string()
+                                                        )
+                                                    );
+                                                }
+                                                if let Err(e) = process_manager.start(&program) {
+                                                    tracing::error!(
+                                                        "{}",
+                                                        t!(
+                                                            "start.program.failed",
+                                                            name = program.name.clone(),
+                                                            error = e.to_string()
+                                                        )
+                                                    );
+                                                }
+                                                let _ = event_loop_proxy.send_event(CustomEvent::RefreshMenu);
+                                            }
+                                        }
                                         MenuAction::ToggleAutostart => {
                                             if let Ok(mut cfg) = config_clone.write() {
                                                 let old_cfg = cfg.clone();
@@ -273,16 +313,19 @@ impl ApplicationHandler<CustomEvent> for AppHandler {
     }
 
     fn user_event(&mut self, _event_loop: &winit::event_loop::ActiveEventLoop, event: CustomEvent) {
-        let CustomEvent::ConfigUpdated(_old_config) = event;
-        // Update menu in main thread
-        if let Ok(config) = self.config.read() {
-            let menu_builder =
-                MenuBuilder::new(self.action_map.clone(), self.process_manager.clone());
-            let new_menu = menu_builder.build(&config);
-            if let Some(tray) = &self.tray {
-                tray.set_menu(Some(Box::new(new_menu)));
+        match event {
+            CustomEvent::ConfigUpdated(_) | CustomEvent::RefreshMenu => {
+                // Update menu in main thread
+                if let Ok(config) = self.config.read() {
+                    let menu_builder =
+                        MenuBuilder::new(self.action_map.clone(), self.process_manager.clone());
+                    let new_menu = menu_builder.build(&config);
+                    if let Some(tray) = &self.tray {
+                        tray.set_menu(Some(Box::new(new_menu)));
+                    }
+                    info!("{}", t!("tray.menu.updated"));
+                }
             }
-            info!("{}", t!("tray.menu.updated"));
         }
     }
 

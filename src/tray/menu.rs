@@ -43,8 +43,16 @@ impl MenuBuilder {
                     .push((url_item.id().0.clone(), MenuAction::OpenUrl(url.clone())));
                 let _ = tray_menu.append(&url_item);
             }
-        }
 
+            // Restart service option right next to open link
+            let label = t!("restart.program", name = program.name.clone());
+            let restart_item = MenuItem::new(label, true, None);
+            self.action_map.lock().unwrap().push((
+                restart_item.id().0.clone(),
+                MenuAction::RestartProgram(program.name.clone()),
+            ));
+            let _ = tray_menu.append(&restart_item);
+        }
         // Separator
         let _ = tray_menu.append(&PredefinedMenuItem::separator());
 
@@ -105,4 +113,74 @@ fn build_status_icon(is_running: bool) -> Option<Icon> {
     }
 
     Icon::from_rgba(rgba, ICON_SIZE, ICON_SIZE).ok()
+}
+
+#[cfg(test)]
+mod tests {
+    use std::sync::{Arc, Mutex};
+
+    use super::*;
+    use crate::config::ProgramConfig;
+
+    #[test]
+    fn test_menu_builder_single_program_restart() {
+        let action_map = Arc::new(Mutex::new(Vec::new()));
+        let process_manager = Arc::new(ProcessManager::new());
+        let builder = MenuBuilder::new(action_map.clone(), process_manager);
+
+        let config = AppConfig {
+            programs: vec![ProgramConfig {
+                name: "test-svc".to_string(),
+                path: "test".to_string(),
+                args: None,
+                service_url: Some("http://localhost:8080".to_string()),
+            }],
+            ..Default::default()
+        };
+
+        let _menu = builder.build(&config);
+        let actions = action_map.lock().unwrap();
+
+        let has_restart = actions
+            .iter()
+            .any(|(_, a)| matches!(a, MenuAction::RestartProgram(name) if name == "test-svc"));
+        assert!(has_restart);
+    }
+
+    #[test]
+    fn test_menu_builder_multi_program_restart() {
+        let action_map = Arc::new(Mutex::new(Vec::new()));
+        let process_manager = Arc::new(ProcessManager::new());
+        let builder = MenuBuilder::new(action_map.clone(), process_manager);
+
+        let config = AppConfig {
+            programs: vec![
+                ProgramConfig {
+                    name: "svc-1".to_string(),
+                    path: "p1".to_string(),
+                    args: None,
+                    service_url: None,
+                },
+                ProgramConfig {
+                    name: "svc-2".to_string(),
+                    path: "p2".to_string(),
+                    args: None,
+                    service_url: None,
+                },
+            ],
+            ..Default::default()
+        };
+
+        let _menu = builder.build(&config);
+        let actions = action_map.lock().unwrap();
+
+        let restart_svc1 = actions
+            .iter()
+            .any(|(_, a)| matches!(a, MenuAction::RestartProgram(name) if name == "svc-1"));
+        let restart_svc2 = actions
+            .iter()
+            .any(|(_, a)| matches!(a, MenuAction::RestartProgram(name) if name == "svc-2"));
+        assert!(restart_svc1);
+        assert!(restart_svc2);
+    }
 }
