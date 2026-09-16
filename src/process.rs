@@ -10,6 +10,20 @@ use tracing::info;
 
 use crate::config::ProgramConfig;
 
+fn kill_child(child: &mut Child) {
+    #[cfg(windows)]
+    {
+        use std::os::windows::process::CommandExt;
+        const CREATE_NO_WINDOW: u32 = 0x08000000;
+        let _ = Command::new("taskkill")
+            .args(["/F", "/T", "/PID", &child.id().to_string()])
+            .creation_flags(CREATE_NO_WINDOW)
+            .status();
+    }
+    let _ = child.kill();
+    let _ = child.wait();
+}
+
 pub struct ProcessManager {
     processes: Arc<Mutex<HashMap<String, Child>>>,
 }
@@ -67,7 +81,7 @@ impl ProcessManager {
         let mut processes = self.processes.lock().unwrap();
 
         if let Some(mut child) = processes.remove(name) {
-            child.kill()?;
+            kill_child(&mut child);
             info!("{}", t!("stopped.program", name = name.to_string()));
         } else {
             return Err(io::Error::new(
@@ -83,18 +97,8 @@ impl ProcessManager {
         let mut processes = self.processes.lock().unwrap();
 
         for (name, mut child) in processes.drain() {
-            if let Err(e) = child.kill() {
-                tracing::error!(
-                    "{}",
-                    t!(
-                        "failed.to.stop.program",
-                        name = name.clone(),
-                        error = e.to_string()
-                    )
-                );
-            } else {
-                info!("{}", t!("program.stopped", name = name.clone()));
-            }
+            kill_child(&mut child);
+            info!("{}", t!("program.stopped", name = name));
         }
     }
 

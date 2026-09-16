@@ -147,10 +147,7 @@ impl TrayApp {
             return false;
         };
 
-        info!(
-            "{}",
-            t!("program.config.changed.restarting", name = &program.name)
-        );
+        info!("{}", t!("restarting.program", name = &program.name));
         if let Err(e) = process_manager.stop(&program.name) {
             tracing::error!(
                 "{}",
