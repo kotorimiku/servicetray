@@ -49,7 +49,7 @@ impl TrayApp {
                     "{}",
                     t!(
                         "start.program.failed",
-                        name = program.name.clone(),
+                        name = &program.name,
                         error = e.to_string()
                     )
                 );
@@ -65,7 +65,7 @@ impl TrayApp {
 
         self.start_all_processes();
 
-        let config = self.config.read().unwrap().clone();
+        let config = self.config.read().unwrap();
         let menu_builder = MenuBuilder::new(action_map.clone(), self.process_manager.clone());
         let tray_menu = menu_builder.build(&config);
 
@@ -95,105 +95,29 @@ impl TrayApp {
             loop {
                 crossbeam_channel::select! {
                     recv(menu_event_receiver) -> event => {
-                        if let Ok(event) = event {
-                            let actions = action_map_clone.lock().unwrap();
-                            for (id, action) in actions.iter() {
-                                if &event.id.0 == id {
-                                    match action {
-                                        MenuAction::OpenUrl(url) => {
-                                            if let Err(e) = open::that(url) {
-                                                tracing::error!("{}", t!("open.url.failed", error = e.to_string()));
-                                            }
-                                        }
-                                        MenuAction::RestartProgram(name) => {
-                                            let program_opt = {
-                                                if let Ok(cfg) = config_clone.read() {
-                                                    cfg.programs.iter().find(|p| &p.name == name).cloned()
-                                                } else {
-                                                    None
-                                                }
-                                            };
-
-                                            if let Some(program) = program_opt {
-                                                info!(
-                                                    "{}",
-                                                    t!(
-                                                        "program.config.changed.restarting",
-                                                        name = program.name.clone()
-                                                    )
-                                                );
-                                                if let Err(e) = process_manager.stop(&program.name) {
-                                                    tracing::error!(
-                                                        "{}",
-                                                        t!(
-                                                            "failed.to.stop.program",
-                                                            name = program.name.clone(),
-                                                            error = e.to_string()
-                                                        )
-                                                    );
-                                                }
-                                                if let Err(e) = process_manager.start(&program) {
-                                                    tracing::error!(
-                                                        "{}",
-                                                        t!(
-                                                            "start.program.failed",
-                                                            name = program.name.clone(),
-                                                            error = e.to_string()
-                                                        )
-                                                    );
-                                                }
-                                                let _ = event_loop_proxy.send_event(CustomEvent::RefreshMenu);
-                                            }
-                                        }
-                                        MenuAction::ToggleAutostart => {
-                                            if let Ok(mut cfg) = config_clone.write() {
-                                                let old_cfg = cfg.clone();
-                                                cfg.autostart = !cfg.autostart;
-
-                                                // Apply system autostart change
-                                                if let Err(e) = crate::autostart::set_autostart(cfg.autostart) {
-                                                    tracing::error!("{}", t!("tray.app.error", error = e.to_string()));
-                                                }
-
-                                                // Persist config
-                                                if let Err(e) = cfg.save() {
-                                                    tracing::error!("{}", t!("open.config.failed", error = e.to_string()));
-                                                }
-
-                                                // Notify main thread to update menu/processes
-                                                let _ = event_loop_proxy.send_event(CustomEvent::ConfigUpdated(old_cfg));
-                                            }
-                                        }
-                                        MenuAction::OpenConfig => {
-                                            let config_path = AppConfig::get_config_path();
-                                            if let Err(e) = open::that(config_path) {
-                                                tracing::error!("{}", t!("open.config.failed", error = e.to_string()));
-                                            }
-                                        }
-                                        MenuAction::Exit => {
-                                            process_manager.stop_all();
-                                            running_clone.store(false, Ordering::SeqCst);
-                                            std::process::exit(0);
-                                        }
-                                    }
-                                    break;
-                                }
-                            }
+                        let Ok(event) = event else { continue };
+                        let actions = action_map_clone.lock().unwrap();
+                        if let Some((_, action)) = actions.iter().find(|(id, _)| id == &event.id.0) {
+                            Self::handle_menu_action(
+                                action,
+                                &process_manager,
+                                &config_clone,
+                                &running_clone,
+                                &event_loop_proxy,
+                            );
                         }
                     }
                     recv(event_receiver) -> event => {
-                        if let Ok(CustomEvent::ConfigUpdated(old_config)) = event {
-                            // Configuration updated; start/stop processes according to changes
-                                if let Ok(new_config) = config_clone.read() {
-                                    let new_cfg = new_config.clone();
-                                    info!("{}", t!("config.reloaded.count", count = new_cfg.programs.len()));
-
-                                // Update processes according to configuration changes
-                                Self::update_processes_internal(&process_manager_for_update, &old_config, &new_cfg);
-
-                                // Notify main thread to update the menu
-                                let _ = event_loop_proxy.send_event(CustomEvent::ConfigUpdated(old_config));
-                            }
+                        if let Ok(CustomEvent::ConfigUpdated(old_config)) = event
+                            && let Ok(new_config) = config_clone.read()
+                        {
+                            info!("{}", t!("config.reloaded.count", count = new_config.programs.len()));
+                            Self::update_processes_internal(
+                                &process_manager_for_update,
+                                &old_config,
+                                &new_config,
+                            );
+                            let _ = event_loop_proxy.send_event(CustomEvent::ConfigUpdated(old_config));
                         }
                     }
                 }
@@ -211,6 +135,91 @@ impl TrayApp {
         event_loop.run_app(&mut app_handler)?;
 
         Ok(())
+    }
+
+    fn restart_program(
+        process_manager: &ProcessManager,
+        config: &RwLock<AppConfig>,
+        name: &str,
+    ) -> bool {
+        let Ok(cfg) = config.read() else { return false };
+        let Some(program) = cfg.programs.iter().find(|p| p.name == name) else {
+            return false;
+        };
+
+        info!(
+            "{}",
+            t!("program.config.changed.restarting", name = &program.name)
+        );
+        if let Err(e) = process_manager.stop(&program.name) {
+            tracing::error!(
+                "{}",
+                t!(
+                    "failed.to.stop.program",
+                    name = &program.name,
+                    error = e.to_string()
+                )
+            );
+        }
+        if let Err(e) = process_manager.start(program) {
+            tracing::error!(
+                "{}",
+                t!(
+                    "start.program.failed",
+                    name = &program.name,
+                    error = e.to_string()
+                )
+            );
+        }
+        true
+    }
+
+    fn handle_menu_action(
+        action: &MenuAction,
+        process_manager: &ProcessManager,
+        config: &RwLock<AppConfig>,
+        running: &AtomicBool,
+        proxy: &winit::event_loop::EventLoopProxy<CustomEvent>,
+    ) {
+        match action {
+            MenuAction::OpenUrl(url) => {
+                if let Err(e) = open::that(url) {
+                    tracing::error!("{}", t!("open.url.failed", error = e.to_string()));
+                }
+            }
+            MenuAction::RestartProgram(name) => {
+                if Self::restart_program(process_manager, config, name) {
+                    let _ = proxy.send_event(CustomEvent::RefreshMenu);
+                }
+            }
+            MenuAction::ToggleAutostart => {
+                if let Ok(mut cfg) = config.write() {
+                    let old_cfg = cfg.clone();
+                    cfg.autostart = !cfg.autostart;
+
+                    if let Err(e) = crate::autostart::set_autostart(cfg.autostart) {
+                        tracing::error!("{}", t!("tray.app.error", error = e.to_string()));
+                    }
+
+                    if let Err(e) = cfg.save() {
+                        tracing::error!("{}", t!("open.config.failed", error = e.to_string()));
+                    }
+
+                    let _ = proxy.send_event(CustomEvent::ConfigUpdated(old_cfg));
+                }
+            }
+            MenuAction::OpenConfig => {
+                let config_path = AppConfig::get_config_path();
+                if let Err(e) = open::that(config_path) {
+                    tracing::error!("{}", t!("open.config.failed", error = e.to_string()));
+                }
+            }
+            MenuAction::Exit => {
+                process_manager.stop_all();
+                running.store(false, Ordering::SeqCst);
+                std::process::exit(0);
+            }
+        }
     }
 
     /// Start/stop processes based on configuration changes
@@ -243,7 +252,7 @@ impl TrayApp {
                     "{}",
                     t!(
                         "start.program.failed",
-                        name = program.name.clone(),
+                        name = &program.name,
                         error = e.to_string()
                     )
                 );
@@ -252,41 +261,44 @@ impl TrayApp {
 
         // Restart processes with changed properties
         for new_program in &new_config.programs {
-            if let Some(old_program) = old_config
+            let Some(old_program) = old_config
                 .programs
                 .iter()
                 .find(|p| p.name == new_program.name)
-            {
-                // If the configuration changed, restart the process
-                if old_program != new_program {
-                    info!(
-                        "{}",
-                        t!(
-                            "program.config.changed.restarting",
-                            name = new_program.name.clone()
-                        )
-                    );
-                    if let Err(e) = process_manager.stop(&new_program.name) {
-                        tracing::error!(
-                            "{}",
-                            t!(
-                                "failed.to.stop.program",
-                                name = new_program.name.clone(),
-                                error = e.to_string()
-                            )
-                        );
-                    }
-                    if let Err(e) = process_manager.start(new_program) {
-                        tracing::error!(
-                            "{}",
-                            t!(
-                                "start.program.failed",
-                                name = new_program.name.clone(),
-                                error = e.to_string()
-                            )
-                        );
-                    }
-                }
+            else {
+                continue;
+            };
+
+            if old_program == new_program {
+                continue;
+            }
+
+            info!(
+                "{}",
+                t!(
+                    "program.config.changed.restarting",
+                    name = &new_program.name
+                )
+            );
+            if let Err(e) = process_manager.stop(&new_program.name) {
+                tracing::error!(
+                    "{}",
+                    t!(
+                        "failed.to.stop.program",
+                        name = &new_program.name,
+                        error = e.to_string()
+                    )
+                );
+            }
+            if let Err(e) = process_manager.start(new_program) {
+                tracing::error!(
+                    "{}",
+                    t!(
+                        "start.program.failed",
+                        name = &new_program.name,
+                        error = e.to_string()
+                    )
+                );
             }
         }
     }
