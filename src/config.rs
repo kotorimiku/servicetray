@@ -28,6 +28,8 @@ pub struct ProgramConfig {
     pub path: String,
     pub args: Option<Vec<String>>,
     pub service_url: Option<String>,
+    #[serde(default)]
+    pub watch_paths: Option<Vec<String>>,
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize, Default)]
@@ -71,5 +73,32 @@ impl AppConfig {
 
     pub fn get_config_path() -> &'static PathBuf {
         &CONFIG_PATH
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn test_program_config_watch_paths_deserialization() {
+        let json = r#"{
+            "name": "demo",
+            "path": "demo.exe",
+            "watch_paths": ["src", "config.toml"]
+        }"#;
+        let program: ProgramConfig = serde_json::from_str(json).unwrap();
+        assert_eq!(
+            program.watch_paths,
+            Some(vec!["src".to_string(), "config.toml".to_string()])
+        );
+
+        let json_without_watch_paths = r#"{
+            "name": "demo",
+            "path": "demo.exe"
+        }"#;
+        let program_default: ProgramConfig =
+            serde_json::from_str(json_without_watch_paths).unwrap();
+        assert_eq!(program_default.watch_paths, None);
     }
 }

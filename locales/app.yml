@@ -86,3 +86,12 @@ create.icon.failed:
 autostart:
   en: "Auto start on boot"
   zh-CN: "开机自启"
+program.file.changed.restarting:
+  en: "File change detected for program %{name}, restarting..."
+  zh-CN: "检测到程序 %{name} 监控路径变化，正在重启..."
+watch.path.failed:
+  en: "Failed to watch path '%{path}' for program '%{name}': %{error}"
+  zh-CN: "为程序 '%{name}' 监控路径 '%{path}' 失败: %{error}"
+watch.path.not_found:
+  en: "Watch path '%{path}' for program '%{name}' does not exist"
+  zh-CN: "程序 '%{name}' 的监控路径 '%{path}' 不存在"

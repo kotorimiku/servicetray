@@ -15,9 +15,8 @@ use crate::{
     event::{CustomEvent, MenuAction},
     process::ProcessManager,
     tray::menu::MenuBuilder,
-    watcher::ConfigWatcher,
+    watcher::{ConfigWatcher, ProgramWatcherManager},
 };
-
 fn create_icon() -> Result<Icon> {
     let icon_bytes = include_bytes!("../../assets/icon.png");
     let img = image::load_from_memory(icon_bytes)
@@ -79,7 +78,9 @@ impl TrayApp {
 
         let (event_sender, event_receiver) = unbounded();
 
-        let _watcher = ConfigWatcher::start(self.config.clone(), event_sender)?;
+        let _watcher = ConfigWatcher::start(self.config.clone(), event_sender.clone())?;
+        let mut program_watcher = ProgramWatcherManager::new(event_sender)?;
+        program_watcher.update(&config.programs);
 
         let event_loop_proxy = event_loop.create_proxy();
 
@@ -108,16 +109,30 @@ impl TrayApp {
                         }
                     }
                     recv(event_receiver) -> event => {
-                        if let Ok(CustomEvent::ConfigUpdated(old_config)) = event
-                            && let Ok(new_config) = config_clone.read()
-                        {
-                            info!("{}", t!("config.reloaded.count", count = new_config.programs.len()));
-                            Self::update_processes_internal(
-                                &process_manager_for_update,
-                                &old_config,
-                                &new_config,
-                            );
-                            let _ = event_loop_proxy.send_event(CustomEvent::ConfigUpdated(old_config));
+                        match event {
+                            Ok(CustomEvent::ConfigUpdated(old_config)) => {
+                                if let Ok(new_config) = config_clone.read() {
+                                    info!("{}", t!("config.reloaded.count", count = new_config.programs.len()));
+                                    Self::update_processes_internal(
+                                        &process_manager_for_update,
+                                        &old_config,
+                                        &new_config,
+                                    );
+                                    program_watcher.update(&new_config.programs);
+                                    let _ = event_loop_proxy.send_event(CustomEvent::ConfigUpdated(old_config));
+                                }
+                            }
+                            Ok(CustomEvent::RestartProgramByWatcher(name)) => {
+                                info!("{}", t!("program.file.changed.restarting", name = &name));
+                                if Self::restart_or_start_program(
+                                    &process_manager_for_update,
+                                    &config_clone,
+                                    &name,
+                                ) {
+                                    let _ = event_loop_proxy.send_event(CustomEvent::RefreshMenu);
+                                }
+                            }
+                            _ => {}
                         }
                     }
                 }
@@ -142,22 +157,34 @@ impl TrayApp {
         config: &RwLock<AppConfig>,
         name: &str,
     ) -> bool {
+        Self::restart_or_start_program(process_manager, config, name)
+    }
+
+    fn restart_or_start_program(
+        process_manager: &ProcessManager,
+        config: &RwLock<AppConfig>,
+        name: &str,
+    ) -> bool {
         let Ok(cfg) = config.read() else { return false };
         let Some(program) = cfg.programs.iter().find(|p| p.name == name) else {
             return false;
         };
 
-        info!("{}", t!("restarting.program", name = &program.name));
-        if let Err(e) = process_manager.stop(&program.name) {
-            tracing::error!(
-                "{}",
-                t!(
-                    "failed.to.stop.program",
-                    name = &program.name,
-                    error = e.to_string()
-                )
-            );
+        if process_manager.is_running(&program.name) {
+            info!("{}", t!("restarting.program", name = &program.name));
+            if let Err(e) = process_manager.stop(&program.name) {
+                tracing::error!(
+                    "{}",
+                    t!(
+                        "failed.to.stop.program",
+                        name = &program.name,
+                        error = e.to_string()
+                    )
+                );
+                return false;
+            }
         }
+
         if let Err(e) = process_manager.start(program) {
             tracing::error!(
                 "{}",
@@ -335,6 +362,7 @@ impl ApplicationHandler<CustomEvent> for AppHandler {
                     info!("{}", t!("tray.menu.updated"));
                 }
             }
+            CustomEvent::RestartProgramByWatcher(_) => {}
         }
     }
 

@@ -134,6 +134,7 @@ mod tests {
                 path: "test".to_string(),
                 args: None,
                 service_url: Some("http://localhost:8080".to_string()),
+                watch_paths: None,
             }],
             ..Default::default()
         };
@@ -160,12 +161,14 @@ mod tests {
                     path: "p1".to_string(),
                     args: None,
                     service_url: None,
+                    watch_paths: None,
                 },
                 ProgramConfig {
                     name: "svc-2".to_string(),
                     path: "p2".to_string(),
                     args: None,
                     service_url: None,
+                    watch_paths: None,
                 },
             ],
             ..Default::default()

@@ -1,6 +1,7 @@
 #[derive(Debug)]
 pub enum CustomEvent {
     ConfigUpdated(crate::config::AppConfig),
+    RestartProgramByWatcher(String),
     RefreshMenu,
 }
 
