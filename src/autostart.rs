@@ -138,3 +138,16 @@ pub fn set_autostart(_enabled: bool) -> Result<()> {
     // Unsupported platform: no-op
     Ok(())
 }
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn test_set_autostart() {
+        let res = set_autostart(true);
+        assert!(res.is_ok());
+        let res_off = set_autostart(false);
+        assert!(res_off.is_ok());
+    }
+}

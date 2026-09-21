@@ -81,6 +81,7 @@ impl TrayApp {
         let _watcher = ConfigWatcher::start(self.config.clone(), event_sender.clone())?;
         let mut program_watcher = ProgramWatcherManager::new(event_sender)?;
         program_watcher.update(&config.programs);
+        drop(config);
 
         let event_loop_proxy = event_loop.create_proxy();
 
@@ -97,10 +98,16 @@ impl TrayApp {
                 crossbeam_channel::select! {
                     recv(menu_event_receiver) -> event => {
                         let Ok(event) = event else { continue };
-                        let actions = action_map_clone.lock().unwrap();
-                        if let Some((_, action)) = actions.iter().find(|(id, _)| id == &event.id.0) {
+                        let action = {
+                            let actions = action_map_clone.lock().unwrap();
+                            actions
+                                .iter()
+                                .find(|(id, _)| id == &event.id.0)
+                                .map(|(_, a)| a.clone())
+                        };
+                        if let Some(action) = action {
                             Self::handle_menu_action(
-                                action,
+                                &action,
                                 &process_manager,
                                 &config_clone,
                                 &running_clone,
@@ -217,20 +224,21 @@ impl TrayApp {
                 }
             }
             MenuAction::ToggleAutostart => {
-                if let Ok(mut cfg) = config.write() {
+                let (autostart, old_cfg) = {
+                    let Ok(mut cfg) = config.write() else { return };
                     let old_cfg = cfg.clone();
                     cfg.autostart = !cfg.autostart;
-
-                    if let Err(e) = crate::autostart::set_autostart(cfg.autostart) {
-                        tracing::error!("{}", t!("tray.app.error", error = e.to_string()));
-                    }
-
                     if let Err(e) = cfg.save() {
                         tracing::error!("{}", t!("open.config.failed", error = e.to_string()));
                     }
+                    (cfg.autostart, old_cfg)
+                };
 
-                    let _ = proxy.send_event(CustomEvent::ConfigUpdated(old_cfg));
+                if let Err(e) = crate::autostart::set_autostart(autostart) {
+                    tracing::error!("{}", t!("tray.app.error", error = e.to_string()));
                 }
+
+                let _ = proxy.send_event(CustomEvent::ConfigUpdated(old_cfg));
             }
             MenuAction::OpenConfig => {
                 let config_path = AppConfig::get_config_path();
@@ -370,5 +378,42 @@ impl ApplicationHandler<CustomEvent> for AppHandler {
         if !self.running.load(Ordering::SeqCst) {
             event_loop.exit();
         }
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn test_toggle_autostart_action() {
+        #[cfg(target_os = "windows")]
+        use winit::platform::windows::EventLoopBuilderExtWindows;
+        let event_loop = winit::event_loop::EventLoop::<CustomEvent>::with_user_event()
+            .with_any_thread(true)
+            .build()
+            .unwrap();
+        let proxy = event_loop.create_proxy();
+        let config = Arc::new(RwLock::new(AppConfig::default()));
+        let process_manager = ProcessManager::new();
+        let running = AtomicBool::new(true);
+
+        TrayApp::handle_menu_action(
+            &MenuAction::ToggleAutostart,
+            &process_manager,
+            &config,
+            &running,
+            &proxy,
+        );
+        assert!(config.read().unwrap().autostart);
+
+        TrayApp::handle_menu_action(
+            &MenuAction::ToggleAutostart,
+            &process_manager,
+            &config,
+            &running,
+            &proxy,
+        );
+        assert!(!config.read().unwrap().autostart);
     }
 }

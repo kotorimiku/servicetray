@@ -1,7 +1,7 @@
 use std::sync::{Arc, Mutex};
 
 use rust_i18n::t;
-use tray_icon::menu::{Icon, IconMenuItem, Menu, MenuItem, PredefinedMenuItem};
+use tray_icon::menu::{CheckMenuItem, Icon, IconMenuItem, Menu, MenuItem, PredefinedMenuItem};
 
 use crate::{config::AppConfig, event::MenuAction, process::ProcessManager};
 
@@ -57,12 +57,7 @@ impl MenuBuilder {
         let _ = tray_menu.append(&PredefinedMenuItem::separator());
 
         // Autostart toggle
-        let autostart_label = if config.autostart {
-            format!("✓ {}", t!("autostart"))
-        } else {
-            t!("autostart").to_string()
-        };
-        let autostart_item = MenuItem::new(autostart_label, true, None);
+        let autostart_item = CheckMenuItem::new(t!("autostart"), true, config.autostart, None);
         self.action_map
             .lock()
             .unwrap()
@@ -185,5 +180,21 @@ mod tests {
             .any(|(_, a)| matches!(a, MenuAction::RestartProgram(name) if name == "svc-2"));
         assert!(restart_svc1);
         assert!(restart_svc2);
+    }
+
+    #[test]
+    fn test_menu_builder_autostart_action_mapping() {
+        let action_map = Arc::new(Mutex::new(Vec::new()));
+        let process_manager = Arc::new(ProcessManager::new());
+        let builder = MenuBuilder::new(action_map.clone(), process_manager);
+
+        let config = AppConfig::default();
+        let _menu = builder.build(&config);
+
+        let actions = action_map.lock().unwrap();
+        let autostart = actions
+            .iter()
+            .find(|(_, a)| matches!(a, MenuAction::ToggleAutostart));
+        assert!(autostart.is_some());
     }
 }
