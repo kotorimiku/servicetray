@@ -300,6 +300,7 @@ mod tests {
             args: None,
             service_url: None,
             watch_paths: Some(vec!["watch_me.txt".to_string()]),
+            working_dir: None,
         };
 
         manager.update(&[program]);

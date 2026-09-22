@@ -130,6 +130,7 @@ mod tests {
                 args: None,
                 service_url: Some("http://localhost:8080".to_string()),
                 watch_paths: None,
+                working_dir: None,
             }],
             ..Default::default()
         };
@@ -157,6 +158,7 @@ mod tests {
                     args: None,
                     service_url: None,
                     watch_paths: None,
+                    working_dir: None,
                 },
                 ProgramConfig {
                     name: "svc-2".to_string(),
@@ -164,6 +166,7 @@ mod tests {
                     args: None,
                     service_url: None,
                     watch_paths: None,
+                    working_dir: None,
                 },
             ],
             ..Default::default()

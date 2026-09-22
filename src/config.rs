@@ -22,6 +22,10 @@ static CONFIG_PATH: LazyLock<PathBuf> = LazyLock::new(|| {
     home.join(".config").join(CONFIG_FILE_NAME)
 });
 
+pub fn default_working_dir() -> String {
+    "~".to_string()
+}
+
 #[derive(Debug, Clone, Serialize, Deserialize, PartialEq)]
 pub struct ProgramConfig {
     pub name: String,
@@ -30,9 +34,17 @@ pub struct ProgramConfig {
     pub service_url: Option<String>,
     #[serde(default)]
     pub watch_paths: Option<Vec<String>>,
+    #[serde(default)]
+    pub working_dir: Option<String>,
 }
 
-#[derive(Debug, Clone, Serialize, Deserialize, Default)]
+impl ProgramConfig {
+    pub fn effective_working_dir<'a>(&'a self, global_working_dir: &'a str) -> &'a str {
+        self.working_dir.as_deref().unwrap_or(global_working_dir)
+    }
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct AppConfig {
     #[serde(default)]
     pub programs: Vec<ProgramConfig>,
@@ -42,6 +54,20 @@ pub struct AppConfig {
     pub log_level: Option<String>,
     #[serde(default)]
     pub save_log_file: bool,
+    #[serde(default = "default_working_dir")]
+    pub working_dir: String,
+}
+
+impl Default for AppConfig {
+    fn default() -> Self {
+        Self {
+            programs: Vec::new(),
+            autostart: false,
+            log_level: None,
+            save_log_file: false,
+            working_dir: default_working_dir(),
+        }
+    }
 }
 
 impl AppConfig {
@@ -137,6 +163,39 @@ mod tests {
         let program_default: ProgramConfig =
             serde_json::from_str(json_without_watch_paths).unwrap();
         assert_eq!(program_default.watch_paths, None);
+    }
+
+    #[test]
+    fn test_working_dir_priority_and_deserialization() {
+        let app_json = r#"{
+            "working_dir": "~/global",
+            "programs": [
+                { "name": "p1", "path": "p1.exe", "working_dir": "~/p1_cwd" },
+                { "name": "p2", "path": "p2.exe" }
+            ]
+        }"#;
+        let app_config: AppConfig = serde_json::from_str(app_json).unwrap();
+        assert_eq!(app_config.working_dir, "~/global");
+        assert_eq!(
+            app_config.programs[0].working_dir,
+            Some("~/p1_cwd".to_string())
+        );
+        assert_eq!(
+            app_config.programs[0].effective_working_dir(&app_config.working_dir),
+            "~/p1_cwd"
+        );
+        assert_eq!(app_config.programs[1].working_dir, None);
+        assert_eq!(
+            app_config.programs[1].effective_working_dir(&app_config.working_dir),
+            "~/global"
+        );
+
+        let default_app = AppConfig::default();
+        assert_eq!(default_app.working_dir, "~");
+
+        let empty_json = "{}";
+        let deserialized_default: AppConfig = serde_json::from_str(empty_json).unwrap();
+        assert_eq!(deserialized_default.working_dir, "~");
     }
 
     #[test]

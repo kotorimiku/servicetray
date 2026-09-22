@@ -35,7 +35,7 @@ impl ProcessManager {
         }
     }
 
-    pub fn start(&self, config: &ProgramConfig) -> io::Result<()> {
+    pub fn start(&self, config: &ProgramConfig, global_working_dir: &str) -> io::Result<()> {
         let mut processes = self.processes.lock().unwrap();
 
         if processes.contains_key(&config.name) {
@@ -47,7 +47,9 @@ impl ProcessManager {
 
         let exe_path = expand_tilde(&config.path);
         let mut cmd = Command::new(&exe_path);
-
+        cmd.current_dir(expand_tilde(
+            config.effective_working_dir(global_working_dir),
+        ));
         if let Some(args) = &config.args {
             for arg in args {
                 cmd.arg(expand_tilde_arg(arg));
@@ -220,15 +222,17 @@ mod windows_job_object {
 
 #[cfg(windows)]
 use windows_job_object::{assign_process as assign_to_job_object, close_job as close_job_object};
-
 #[cfg(test)]
 mod tests {
     use std::fs;
 
     use super::*;
 
+    static PROCESS_TEST_LOCK: Mutex<()> = Mutex::new(());
+
     #[test]
     fn test_process_manager_start_with_tilde_path() {
+        let _lock = PROCESS_TEST_LOCK.lock().unwrap_or_else(|e| e.into_inner());
         let Some(home) = std::env::home_dir() else {
             return;
         };
@@ -260,9 +264,10 @@ mod tests {
             args: Some(vec!["~/dummy_arg".to_string()]),
             service_url: None,
             watch_paths: None,
+            working_dir: None,
         };
 
-        let start_res = manager.start(&config);
+        let start_res = manager.start(&config, "~");
         let _ = manager.stop("tilde_test_prog");
         let _ = fs::remove_file(&test_file);
 
@@ -271,5 +276,77 @@ mod tests {
             "Failed to start program with tilde path: {:?}",
             start_res
         );
+    }
+
+    #[test]
+    fn test_process_manager_start_with_working_dir() {
+        let _lock = PROCESS_TEST_LOCK.lock().unwrap_or_else(|e| e.into_inner());
+        let manager = ProcessManager::new();
+
+        #[cfg(windows)]
+        let shell_cmd = "cmd.exe";
+        #[cfg(not(windows))]
+        let shell_cmd = "sh";
+
+        // 1. Program without working_dir uses global working dir ("~")
+        let config_default = ProgramConfig {
+            name: "cwd_test_default".to_string(),
+            path: shell_cmd.to_string(),
+            args: None,
+            service_url: None,
+            watch_paths: None,
+            working_dir: None,
+        };
+        let res = manager.start(&config_default, "~");
+        assert!(res.is_ok(), "Failed to start with ~: {:?}", res);
+        let _ = manager.stop("cwd_test_default");
+
+        // 2. Program with non-existent working_dir fails to spawn
+        let config_invalid = ProgramConfig {
+            name: "cwd_test_invalid".to_string(),
+            path: shell_cmd.to_string(),
+            args: None,
+            service_url: None,
+            watch_paths: None,
+            working_dir: Some("C:\\non_existent_dir_999999".to_string()),
+        };
+        let res_invalid = manager.start(&config_invalid, "~");
+        assert!(
+            res_invalid.is_err(),
+            "Expected error for invalid working dir"
+        );
+
+        // 3. Program with non-existent global working_dir fails to spawn when program working_dir is None
+        let config_inherit_invalid = ProgramConfig {
+            name: "cwd_test_inherit_invalid".to_string(),
+            path: shell_cmd.to_string(),
+            args: None,
+            service_url: None,
+            watch_paths: None,
+            working_dir: None,
+        };
+        let res_inherit_invalid =
+            manager.start(&config_inherit_invalid, "C:\\non_existent_dir_888888");
+        assert!(
+            res_inherit_invalid.is_err(),
+            "Expected error when inheriting non-existent global working dir"
+        );
+
+        // 4. Valid per-program working_dir overrides invalid global working_dir
+        let config_override = ProgramConfig {
+            name: "cwd_test_override".to_string(),
+            path: shell_cmd.to_string(),
+            args: None,
+            service_url: None,
+            watch_paths: None,
+            working_dir: Some("~".to_string()),
+        };
+        let res_override = manager.start(&config_override, "C:\\non_existent_dir_777777");
+        assert!(
+            res_override.is_ok(),
+            "Expected program working_dir to override invalid global: {:?}",
+            res_override
+        );
+        let _ = manager.stop("cwd_test_override");
     }
 }

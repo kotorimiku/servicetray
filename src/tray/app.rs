@@ -43,7 +43,7 @@ impl TrayApp {
     fn start_all_processes(&self) {
         let config = self.config.read().unwrap();
         for program in &config.programs {
-            if let Err(e) = self.process_manager.start(program) {
+            if let Err(e) = self.process_manager.start(program, &config.working_dir) {
                 tracing::error!(
                     "{}",
                     t!(
@@ -192,7 +192,7 @@ impl TrayApp {
             }
         }
 
-        if let Err(e) = process_manager.start(program) {
+        if let Err(e) = process_manager.start(program, &cfg.working_dir) {
             tracing::error!(
                 "{}",
                 t!(
@@ -278,7 +278,7 @@ impl TrayApp {
         // Start newly added processes
         for program in &new_config.programs {
             if !old_names.contains(&program.name)
-                && let Err(e) = process_manager.start(program)
+                && let Err(e) = process_manager.start(program, &new_config.working_dir)
             {
                 tracing::error!(
                     "{}",
@@ -301,7 +301,9 @@ impl TrayApp {
                 continue;
             };
 
-            if old_program == new_program {
+            let old_cwd = old_program.effective_working_dir(&old_config.working_dir);
+            let new_cwd = new_program.effective_working_dir(&new_config.working_dir);
+            if old_program == new_program && old_cwd == new_cwd {
                 continue;
             }
 
@@ -322,7 +324,7 @@ impl TrayApp {
                     )
                 );
             }
-            if let Err(e) = process_manager.start(new_program) {
+            if let Err(e) = process_manager.start(new_program, &new_config.working_dir) {
                 tracing::error!(
                     "{}",
                     t!(
