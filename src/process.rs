@@ -8,7 +8,7 @@ use std::{
 use rust_i18n::t;
 use tracing::info;
 
-use crate::config::ProgramConfig;
+use crate::config::{ProgramConfig, expand_tilde, expand_tilde_arg};
 
 fn kill_child(child: &mut Child) {
     #[cfg(windows)]
@@ -45,10 +45,13 @@ impl ProcessManager {
             ));
         }
 
-        let mut cmd = Command::new(&config.path);
+        let exe_path = expand_tilde(&config.path);
+        let mut cmd = Command::new(&exe_path);
 
         if let Some(args) = &config.args {
-            cmd.args(args);
+            for arg in args {
+                cmd.arg(expand_tilde_arg(arg));
+            }
         }
 
         #[cfg(windows)]
@@ -217,3 +220,56 @@ mod windows_job_object {
 
 #[cfg(windows)]
 use windows_job_object::{assign_process as assign_to_job_object, close_job as close_job_object};
+
+#[cfg(test)]
+mod tests {
+    use std::fs;
+
+    use super::*;
+
+    #[test]
+    fn test_process_manager_start_with_tilde_path() {
+        let Some(home) = std::env::home_dir() else {
+            return;
+        };
+        #[cfg(windows)]
+        let test_file = home.join("servicetray_tilde_test.cmd");
+        #[cfg(not(windows))]
+        let test_file = home.join("servicetray_tilde_test.sh");
+
+        #[cfg(windows)]
+        fs::write(&test_file, "@echo hello\r\n").unwrap();
+        #[cfg(not(windows))]
+        {
+            use std::os::unix::fs::PermissionsExt;
+            fs::write(&test_file, "#!/bin/sh\necho hello\n").unwrap();
+            let mut perms = fs::metadata(&test_file).unwrap().permissions();
+            perms.set_mode(0o755);
+            fs::set_permissions(&test_file, perms).unwrap();
+        }
+
+        #[cfg(windows)]
+        let tilde_path = "~/servicetray_tilde_test.cmd";
+        #[cfg(not(windows))]
+        let tilde_path = "~/servicetray_tilde_test.sh";
+
+        let manager = ProcessManager::new();
+        let config = ProgramConfig {
+            name: "tilde_test_prog".to_string(),
+            path: tilde_path.to_string(),
+            args: Some(vec!["~/dummy_arg".to_string()]),
+            service_url: None,
+            watch_paths: None,
+        };
+
+        let start_res = manager.start(&config);
+        let _ = manager.stop("tilde_test_prog");
+        let _ = fs::remove_file(&test_file);
+
+        assert!(
+            start_res.is_ok(),
+            "Failed to start program with tilde path: {:?}",
+            start_res
+        );
+    }
+}

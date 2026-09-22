@@ -15,7 +15,7 @@ use rust_i18n::t;
 use tracing::info;
 
 use crate::{
-    config::{AppConfig, ProgramConfig},
+    config::{AppConfig, ProgramConfig, expand_tilde},
     event::CustomEvent,
 };
 /// Configuration file watcher
@@ -77,9 +77,9 @@ impl ConfigWatcher {
 
 /// Resolves a watch path against base dir if relative.
 fn resolve_watch_path(path_str: &str, base_dir: &Path) -> PathBuf {
-    let path = Path::new(path_str);
+    let path = expand_tilde(path_str);
     if path.is_absolute() {
-        path.to_path_buf()
+        path
     } else {
         base_dir.join(path)
     }
@@ -325,6 +325,20 @@ mod tests {
             duplicate.is_err(),
             "Unexpected extra event received: {:?}",
             duplicate
+        );
+    }
+
+    #[test]
+    fn test_resolve_watch_path() {
+        let home = std::env::home_dir().unwrap_or(PathBuf::from("."));
+        let base = Path::new("/base/dir");
+        assert_eq!(
+            resolve_watch_path("~/my_watch", base),
+            home.join("my_watch")
+        );
+        assert_eq!(
+            resolve_watch_path("relative_watch", base),
+            base.join("relative_watch")
         );
     }
 }

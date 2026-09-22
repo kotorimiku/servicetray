@@ -76,6 +76,43 @@ impl AppConfig {
     }
 }
 
+/// Expands `~` or `~/...` (and `~\...` on Windows) to the user's home directory.
+pub fn expand_tilde(path_str: &str) -> PathBuf {
+    if path_str == "~" {
+        return home_dir().unwrap_or_else(|| PathBuf::from("~"));
+    }
+
+    if let Some(rest) = path_str
+        .strip_prefix("~/")
+        .or_else(|| path_str.strip_prefix("~\\"))
+        && let Some(home) = home_dir()
+    {
+        let mut path = home;
+        for component in std::path::Path::new(rest).components() {
+            path.push(component);
+        }
+        return path;
+    }
+
+    PathBuf::from(path_str)
+}
+
+/// Expands `~` within command arguments, supporting standalone paths (`~/...`)
+/// and option assignments (`--option=~/...`).
+pub fn expand_tilde_arg(arg: &str) -> String {
+    if arg == "~" || arg.starts_with("~/") || arg.starts_with("~\\") {
+        expand_tilde(arg).to_string_lossy().into_owned()
+    } else if let Some((flag, val)) = arg.split_once('=') {
+        if val == "~" || val.starts_with("~/") || val.starts_with("~\\") {
+            format!("{flag}={}", expand_tilde(val).to_string_lossy())
+        } else {
+            arg.to_string()
+        }
+    } else {
+        arg.to_string()
+    }
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -100,5 +137,26 @@ mod tests {
         let program_default: ProgramConfig =
             serde_json::from_str(json_without_watch_paths).unwrap();
         assert_eq!(program_default.watch_paths, None);
+    }
+
+    #[test]
+    fn test_expand_tilde() {
+        let home = home_dir().unwrap_or(PathBuf::from("."));
+        assert_eq!(expand_tilde("~"), home);
+        let expected = home.join("bin").join("app");
+        assert_eq!(expand_tilde("~/bin/app"), expected);
+        assert_eq!(expand_tilde("~\\bin\\app"), expected);
+        assert_eq!(expand_tilde("custom_bin"), PathBuf::from("custom_bin"));
+    }
+
+    #[test]
+    fn test_expand_tilde_arg() {
+        let home = home_dir().unwrap_or(PathBuf::from("."));
+        assert_eq!(expand_tilde_arg("--flag"), "--flag");
+        let expected_path = home.join("data").to_string_lossy().into_owned();
+        assert_eq!(expand_tilde_arg("~/data"), expected_path);
+        let expected_opt = format!("--dir={expected_path}");
+        assert_eq!(expand_tilde_arg("--dir=~/data"), expected_opt);
+        assert_eq!(expand_tilde_arg("--foo=bar"), "--foo=bar");
     }
 }
