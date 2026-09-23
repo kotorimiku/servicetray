@@ -1,7 +1,8 @@
 use std::{
     collections::HashMap,
+    fs::OpenOptions,
     io,
-    process::{Child, Command},
+    process::{Child, Command, Stdio},
     sync::{Arc, Mutex},
 };
 
@@ -56,6 +57,18 @@ impl ProcessManager {
             }
         }
 
+        let log_path = config.log_path();
+        if let Some(parent) = log_path.parent() {
+            std::fs::create_dir_all(parent)?;
+        }
+        let out_file = OpenOptions::new()
+            .create(true)
+            .write(true)
+            .truncate(true)
+            .open(&log_path)?;
+        let err_file = out_file.try_clone()?;
+        cmd.stdout(Stdio::from(out_file));
+        cmd.stderr(Stdio::from(err_file));
         #[cfg(windows)]
         {
             use std::os::windows::process::CommandExt;
@@ -348,5 +361,60 @@ mod tests {
             res_override
         );
         let _ = manager.stop("cwd_test_override");
+    }
+
+    #[test]
+    fn test_process_manager_start_with_log_file() {
+        let _lock = PROCESS_TEST_LOCK.lock().unwrap_or_else(|e| e.into_inner());
+        let manager = ProcessManager::new();
+
+        let unique_id = std::time::SystemTime::now()
+            .duration_since(std::time::UNIX_EPOCH)
+            .unwrap()
+            .as_nanos();
+        let prog_name = format!("log_test_{unique_id}");
+
+        #[cfg(windows)]
+        let (cmd, args) = (
+            "cmd.exe",
+            vec!["/C".to_string(), "echo log_output_test".to_string()],
+        );
+        #[cfg(not(windows))]
+        let (cmd, args) = (
+            "sh",
+            vec!["-c".to_string(), "echo log_output_test".to_string()],
+        );
+
+        let config = ProgramConfig {
+            name: prog_name.clone(),
+            path: cmd.to_string(),
+            args: Some(args),
+            service_url: None,
+            watch_paths: None,
+            working_dir: None,
+        };
+
+        let log_file = config.log_path();
+        if let Some(parent) = log_file.parent() {
+            let _ = fs::create_dir_all(parent);
+        }
+        fs::write(&log_file, "previous_log_content\n").unwrap();
+
+        let res = manager.start(&config, "~");
+        assert!(res.is_ok(), "Failed to start program: {:?}", res);
+
+        std::thread::sleep(std::time::Duration::from_millis(300));
+        let _ = manager.stop(&prog_name);
+
+        let content = fs::read_to_string(&log_file).unwrap_or_default();
+        let _ = fs::remove_file(&log_file);
+        assert!(
+            content.contains("log_output_test"),
+            "Expected log content, got: {content}"
+        );
+        assert!(
+            !content.contains("previous_log_content"),
+            "Expected previous log content to be overwritten, got: {content}"
+        );
     }
 }

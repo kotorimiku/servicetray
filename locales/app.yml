@@ -5,6 +5,12 @@ exit:
 open.link:
   en: "Open %{name}"
   zh-CN: "打开 %{name}"
+open.log:
+  en: "📄 View %{name} Log"
+  zh-CN: "📄 查看 %{name} 日志"
+open.log.failed:
+  en: "Failed to open log file: %{error}"
+  zh-CN: "打开日志文件失败: %{error}"
 restart.service:
   en: "Restart Service"
   zh-CN: "重启服务"

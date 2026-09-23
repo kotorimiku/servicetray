@@ -214,8 +214,19 @@ impl TrayApp {
     ) {
         match action {
             MenuAction::OpenUrl(url) => {
-                if let Err(e) = open::that(url) {
+                if let Err(e) = open::that_detached(url) {
                     tracing::error!("{}", t!("open.url.failed", error = e.to_string()));
+                }
+            }
+            MenuAction::OpenLog(path) => {
+                if let Some(parent) = path.parent() {
+                    let _ = std::fs::create_dir_all(parent);
+                }
+                if !path.exists() {
+                    let _ = std::fs::File::create(path);
+                }
+                if let Err(e) = open::that_detached(path) {
+                    tracing::error!("{}", t!("open.log.failed", error = e.to_string()));
                 }
             }
             MenuAction::RestartProgram(name) => {
@@ -242,7 +253,7 @@ impl TrayApp {
             }
             MenuAction::OpenConfig => {
                 let config_path = AppConfig::get_config_path();
-                if let Err(e) = open::that(config_path) {
+                if let Err(e) = open::that_detached(config_path) {
                     tracing::error!("{}", t!("open.config.failed", error = e.to_string()));
                 }
             }

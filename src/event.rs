@@ -8,6 +8,7 @@ pub enum CustomEvent {
 #[derive(Clone)]
 pub enum MenuAction {
     OpenUrl(String),
+    OpenLog(std::path::PathBuf),
     RestartProgram(String),
     OpenConfig,
     ToggleAutostart,

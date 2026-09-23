@@ -43,6 +43,14 @@ impl MenuBuilder {
                     .push((url_item.id().0.clone(), MenuAction::OpenUrl(url.clone())));
                 let _ = tray_menu.append(&url_item);
             }
+            // View log option
+            let label = t!("open.log", name = program.name.clone());
+            let log_item = MenuItem::new(label, true, None);
+            self.action_map.lock().unwrap().push((
+                log_item.id().0.clone(),
+                MenuAction::OpenLog(program.log_path()),
+            ));
+            let _ = tray_menu.append(&log_item);
 
             // Restart service option right next to open link
             let label = t!("restart.program", name = program.name.clone());
@@ -199,5 +207,32 @@ mod tests {
             .iter()
             .find(|(_, a)| matches!(a, MenuAction::ToggleAutostart));
         assert!(autostart.is_some());
+    }
+
+    #[test]
+    fn test_menu_builder_program_open_log() {
+        let action_map = Arc::new(Mutex::new(Vec::new()));
+        let process_manager = Arc::new(ProcessManager::new());
+        let builder = MenuBuilder::new(action_map.clone(), process_manager);
+
+        let config = AppConfig {
+            programs: vec![ProgramConfig {
+                name: "log-svc".to_string(),
+                path: "test".to_string(),
+                args: None,
+                service_url: None,
+                watch_paths: None,
+                working_dir: None,
+            }],
+            ..Default::default()
+        };
+
+        let _menu = builder.build(&config);
+        let actions = action_map.lock().unwrap();
+
+        let has_open_log = actions
+            .iter()
+            .any(|(_, a)| matches!(a, MenuAction::OpenLog(path) if path.ends_with("log-svc.log")));
+        assert!(has_open_log);
     }
 }

@@ -10,7 +10,7 @@ winit = "0.30"
 image = { version = "0.25", default-features = false, features = ["png"] }
 serde = { version = "1.0", features = ["derive"] }
 serde_json = "1.0"
-open = "5.0"
+open = { version = "5.0", features = ["shellexecute-on-windows"] }
 color-eyre = "0.6"
 notify = "8.2.0"
 crossbeam-channel = "0.5"

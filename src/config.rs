@@ -6,11 +6,15 @@ use serde::{Deserialize, Serialize};
 const CONFIG_FILE_NAME: &str = "servicetray.json";
 const PORTABLE_CONFIG_FILE_NAME: &str = "config.json";
 
-static CONFIG_PATH: LazyLock<PathBuf> = LazyLock::new(|| {
-    let exe_path = std::env::current_exe().unwrap_or(PathBuf::from("."));
-    let default_dir = PathBuf::from(".");
-    let exe_dir = exe_path.parent().unwrap_or(default_dir.as_path());
+pub fn exe_dir() -> PathBuf {
+    std::env::current_exe()
+        .ok()
+        .and_then(|p| p.parent().map(|p| p.to_path_buf()))
+        .unwrap_or_else(|| PathBuf::from("."))
+}
 
+static CONFIG_PATH: LazyLock<PathBuf> = LazyLock::new(|| {
+    let exe_dir = exe_dir();
     let portable_config_path = exe_dir.join(PORTABLE_CONFIG_FILE_NAME);
 
     if portable_config_path.exists() {
@@ -41,6 +45,10 @@ pub struct ProgramConfig {
 impl ProgramConfig {
     pub fn effective_working_dir<'a>(&'a self, global_working_dir: &'a str) -> &'a str {
         self.working_dir.as_deref().unwrap_or(global_working_dir)
+    }
+
+    pub fn log_path(&self) -> PathBuf {
+        exe_dir().join("logs").join(format!("{}.log", self.name))
     }
 }
 
@@ -217,5 +225,20 @@ mod tests {
         let expected_opt = format!("--dir={expected_path}");
         assert_eq!(expand_tilde_arg("--dir=~/data"), expected_opt);
         assert_eq!(expand_tilde_arg("--foo=bar"), "--foo=bar");
+    }
+
+    #[test]
+    fn test_program_config_log_path() {
+        let exe_dir = exe_dir();
+        let prog = ProgramConfig {
+            name: "test-app".to_string(),
+            path: "test.exe".to_string(),
+            args: None,
+            service_url: None,
+            watch_paths: None,
+            working_dir: None,
+        };
+        let expected = exe_dir.join("logs").join("test-app.log");
+        assert_eq!(prog.log_path(), expected);
     }
 }
