@@ -301,6 +301,11 @@ mod tests {
         #[cfg(not(windows))]
         let shell_cmd = "sh";
 
+        let non_existent_dir = std::env::temp_dir()
+            .join("servicetray_non_existent_dir_999999")
+            .to_string_lossy()
+            .into_owned();
+
         // 1. Program without working_dir uses global working dir ("~")
         let config_default = ProgramConfig {
             name: "cwd_test_default".to_string(),
@@ -321,7 +326,7 @@ mod tests {
             args: None,
             service_url: None,
             watch_paths: None,
-            working_dir: Some("C:\\non_existent_dir_999999".to_string()),
+            working_dir: Some(non_existent_dir.clone()),
         };
         let res_invalid = manager.start(&config_invalid, "~");
         assert!(
@@ -338,8 +343,7 @@ mod tests {
             watch_paths: None,
             working_dir: None,
         };
-        let res_inherit_invalid =
-            manager.start(&config_inherit_invalid, "C:\\non_existent_dir_888888");
+        let res_inherit_invalid = manager.start(&config_inherit_invalid, &non_existent_dir);
         assert!(
             res_inherit_invalid.is_err(),
             "Expected error when inheriting non-existent global working dir"
@@ -354,7 +358,7 @@ mod tests {
             watch_paths: None,
             working_dir: Some("~".to_string()),
         };
-        let res_override = manager.start(&config_override, "C:\\non_existent_dir_777777");
+        let res_override = manager.start(&config_override, &non_existent_dir);
         assert!(
             res_override.is_ok(),
             "Expected program working_dir to override invalid global: {:?}",
